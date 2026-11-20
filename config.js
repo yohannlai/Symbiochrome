@@ -45,10 +45,14 @@ var PARAMS = {
     mu: 0.21,     // Centre de la fonction de croissance gaussienne de Lenia (μ)
 
     // --- Presse Risographie (Rendu WebGL) ---
-    grain: 0.90,  // Intensité du tramage stochastique Blue Noise
-    misreg: 1.1   // Défaut de calage mécanique (décalage en pixels entre les tambours)
+    ink: 1.20,    // Richesse d'encrage (densité des encres Pantone sur le papier)
+    grain: 0.88,  // Intensité du tramage stochastique Blue Noise
+    misreg: 1.2   // Défaut de calage mécanique (décalage en pixels entre les tambours)
 };
+
+// Drapeaux de synchronisation CPU -> GPU (évite d'uploader les textures inutilement à chaque frame)
+var needsAutomataUpload = true;
+var needsLsysUpload = true;
 
 var rnd = Math.random;
 var clamp = (val, min, max) => Math.max(min, Math.min(max, val));
-

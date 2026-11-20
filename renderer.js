@@ -1,47 +1,52 @@
-// 5. MOTEUR DE RENDU WEBGL — SHADER RISOGRAPHIE (BLUE NOISE + 4 ENCRES)
+// 5. MOTEUR DE RENDU WEBGL — SHADER RISOGRAPHIE (BLUE NOISE + 4 ENCRES PUNCHY)
 // ============================================================================
 var glCanvas = document.getElementById('gl-canvas');
 var gl = glCanvas.getContext('webgl');
 
-// Canevas 2D hors-écran qui rassemble les couches dynamiques (flore) avant envoi au GPU
-var dynCanvas = document.createElement('canvas');
-dynCanvas.width = GRID_WIDTH * SCALE;
-dynCanvas.height = GRID_HEIGHT * SCALE;
-var dynCtx = dynCanvas.getContext('2d');
-
-// Canevas 2D hors-écran dédié au dessin des L-Systems
+// Canevas 2D hors-écran dédié uniquement aux L-Systems (mis à jour seulement quand ils poussent)
 var lsysCanvas = document.createElement('canvas');
 lsysCanvas.width = GRID_WIDTH * SCALE;
 lsysCanvas.height = GRID_HEIGHT * SCALE;
 var lsysCtx = lsysCanvas.getContext('2d');
 
+// Buffer léger 160x100 (64 Ko) pour envoyer directement Life & Lenia au GPU
+// Remplace l'ancien dessin Canvas 2D avec filter='blur()' qui faisait chuter les FPS
+var automataTexData = new Uint8Array(GRID_WIDTH * GRID_HEIGHT * 4);
+
 /**
  * Fragment Shader GLSL :
- *  - Lit la texture du terrain fractal (uTexFractal) et trace les courbes de niveau.
- *  - Lit la texture des couches dynamiques (uTexDyn : R = automates, G = L-Systems).
- *  - Applique le tramage stochastique Blue Noise (uTexBlueNoise) et le grain du papier (uTexPaper).
- *  - Simule le défaut de calage entre tambours (uMisreg) et la surimpression soustractive (Multiply).
+ *  - uTexFractal  (unité 0) : Altitude (R) & Humidité (G) fractales
+ *  - uTexAutomata (unité 1) : Life (R) & Lenia (G) filtrés matériellement en bilinéaire (gl.LINEAR)
+ *  - uTexBlueNoise(unité 2) : Texture Blue Noise 128x128 sans couture
+ *  - uTexPaper    (unité 3) : Texture Papier Coton 512x512
+ *  - uTexLsys     (unité 4) : Couche vectorielle des L-Systems (G)
  */
 var fragmentShaderSource = `
 precision highp float;
 
-uniform sampler2D uTexFractal, uTexDyn, uTexBlueNoise, uTexPaper;
+uniform sampler2D uTexFractal, uTexAutomata, uTexBlueNoise, uTexPaper, uTexLsys;
 uniform vec2 uRes, uCamPos;
-uniform float uZoom, uGrain, uMisreg;
+uniform float uZoom, uGrain, uMisreg, uInk;
 
-// Convertit une densité continue d'encre [0..1] en masque de points stochastiques Blue Noise
+// Convertit une densité d'encre [0..1] en tramage stochastique net (points de pigment pur)
 float risoBlueNoiseMask(vec2 fragCoord, float density, vec2 bnOffset) {
-    if (density <= 0.015) return 0.0;
+    if (density <= 0.02) return 0.0;
     float bn = texture2D(uTexBlueNoise, fract(fragCoord / 128.0 + bnOffset)).r;
     float tooth = texture2D(uTexPaper, fract(fragCoord / 512.0 + bnOffset * 0.25)).r;
-    float d = clamp(density + (tooth - 0.92) * 0.65 * uGrain, 0.0, 1.0);
+
+    // Courbe d'encrage généreuse pour des aplats vifs et éclatants façon vraie presse Riso
+    float boosted = clamp(pow(density, 0.80) * uInk, 0.0, 1.0);
+    float d = clamp(boosted + (tooth - 0.93) * 0.55 * uGrain, 0.0, 1.0);
+
     float threshold = mix(0.5, bn, uGrain);
-    float ink = smoothstep(threshold - 0.14, threshold + 0.14, d);
-    float pores = 1.0 - (0.09 * uGrain * smoothstep(0.84, 0.98, bn));
+    // Transition serrée (±0.055) : chaque point imprimé est saturé à 100% au lieu d'être délavé
+    float ink = smoothstep(threshold - 0.055, threshold + 0.055, d);
+    // Micro-porosité subtile pour laisser respirer le grain du papier dans les aplats pleins
+    float pores = 1.0 - (0.06 * uGrain * smoothstep(0.88, 0.99, bn));
     return clamp(ink * pores, 0.0, 1.0);
 }
 
-// Traduit l'altitude fractale et l'humidité en 4 densités d'encres Pantone :
+// Traduit l'altitude fractale et l'humidité en 4 densités d'encres Pantone vives :
 // vec4(FluoPink, MediumBlue, SunflowerYellow, Aqua)
 vec4 getFractalInks(vec2 uv) {
     vec4 fm = texture2D(uTexFractal, uv);
@@ -49,24 +54,34 @@ vec4 getFractalInks(vec2 uv) {
     float hum = fm.g;
     vec4 ink = vec4(0.0);
 
-    // Courbes de niveau topographiques calculées sur l'altitude fractale
-    float iso = smoothstep(0.10, 0.0, abs(fract(h * 7.0) - 0.5));
+    // Courbes de niveau topographiques nettes (isolignes)
+    float iso = smoothstep(0.11, 0.02, abs(fract(h * 7.0) - 0.5));
 
     if (h < 0.32) {
-        // Bassins fractals : encre Aqua + lignes de niveau Medium Blue
-        ink.w = mix(0.28, 0.72, 1.0 - h / 0.32);
-        ink.y = iso * 0.35;
+        // Bassins fractals : aplat Aqua franc + isolignes Medium Blue
+        ink.w = mix(0.68, 0.96, 1.0 - h / 0.32);
+        ink.y = iso * 0.65;
     } else if (h < 0.78) {
-        // Terres fertiles : papier vierge dominant + lavis léger Jaune/Aqua selon l'humidité
-        ink.z = smoothstep(0.35, 0.75, h) * 0.35;
-        ink.w = smoothstep(0.55, 0.95, hum) * 0.28;
-        ink.z += iso * 0.25;
+        // Terres fertiles : papier vierge dans les creux secs, puis aplats francs
+        // Sunflower Yellow + Aqua en zone humide (= surimpression Vert Riso éclatant)
+        float landStep = smoothstep(0.42, 0.52, h);
+        ink.z = landStep * mix(0.55, 0.88, (h - 0.32) / 0.46);
+        ink.w = smoothstep(0.58, 0.72, hum) * 0.62;
+        ink.z = max(ink.z, iso * 0.55);
     } else {
-        // Crêtes fractales : aplat Sunflower Yellow + contours Fluo Pink
-        ink.z = 0.65;
-        ink.x = iso * 0.55;
+        // Crêtes fractales : surimpression Sunflower Yellow + Fluo Pink (= Orange fluo vif)
+        ink.z = 0.94;
+        ink.x = mix(0.55, 0.85, (h - 0.78) / 0.22);
+        ink.x = max(ink.x, iso * 0.88);
     }
     return ink;
+}
+
+// Lecture adoucie des automates (Life + Lenia) directement sur GPU (ultra-rapide)
+float sampleAutomata(vec2 uv) {
+    vec2 clamped = clamp(uv, 0.0, 1.0);
+    vec4 a = texture2D(uTexAutomata, clamped);
+    return clamp(a.r * 0.92 + a.g * 0.88, 0.0, 1.0);
 }
 
 void main() {
@@ -75,20 +90,23 @@ void main() {
     screenUV.y = 1.0 - screenUV.y;
     vec2 w = (screenUV - 0.5) / uZoom + uCamPos;
 
-    // Couleur de base : texture du papier coton non couché
+    // Couleur de base : papier coton non couché
     vec3 col = texture2D(uTexPaper, fract(frag / 512.0)).rgb;
 
     if (w.x >= 0.0 && w.x <= 1.0 && w.y >= 0.0 && w.y <= 1.0) {
-        // Simulation du léger décalage mécanique (misregistration) entre les 4 tambours
+        // Défaut de calage mécanique (misregistration) entre les 4 tambours
         vec2 px = (1.0 / uRes) / uZoom;
         vec2 offPink   = vec2( 2.4, -1.6) * px * uMisreg;
         vec2 offBlue   = vec2(-2.0,  1.8) * px * uMisreg;
         vec2 offYellow = vec2(-1.4, -2.0) * px * uMisreg;
         vec2 offAqua   = vec2( 1.8,  2.0) * px * uMisreg;
 
-        // Fusion des couches du terrain fractal et des couches dynamiques (flore)
-        float pinkAmt   = clamp(getFractalInks(w + offPink).x   + texture2D(uTexDyn, clamp(w + offPink, 0.0, 1.0)).r * 0.92, 0.0, 1.0);
-        float blueAmt   = clamp(getFractalInks(w + offBlue).y   + texture2D(uTexDyn, clamp(w + offBlue, 0.0, 1.0)).g * 1.00, 0.0, 1.0);
+        // Fusion des couches du terrain fractal et des couches vivantes (Automates + L-Systems)
+        float autoPink = sampleAutomata(w + offPink);
+        float lsysBlue = texture2D(uTexLsys, clamp(w + offBlue, 0.0, 1.0)).g;
+
+        float pinkAmt   = clamp(getFractalInks(w + offPink).x   + autoPink, 0.0, 1.0);
+        float blueAmt   = clamp(getFractalInks(w + offBlue).y   + lsysBlue, 0.0, 1.0);
         float yellowAmt = clamp(getFractalInks(w + offYellow).z, 0.0, 1.0);
         float aquaAmt   = clamp(getFractalInks(w + offAqua).w,   0.0, 1.0);
 
@@ -98,11 +116,17 @@ void main() {
         float mPink   = risoBlueNoiseMask(frag, pinkAmt,   vec2(0.71, 0.53));
         float mBlue   = risoBlueNoiseMask(frag, blueAmt,   vec2(0.23, 0.83));
 
-        // Surimpression soustractive (Multiply) des 4 encres Pantone Riso
-        col *= mix(vec3(1.0), vec3(1.00, 0.89, 0.08), mYellow * 0.95); // Sunflower Yellow
-        col *= mix(vec3(1.0), vec3(0.14, 0.76, 0.79), mAqua   * 0.92); // Riso Aqua
-        col *= mix(vec3(1.0), vec3(1.00, 0.28, 0.62), mPink   * 0.94); // Fluo Pink
-        col *= mix(vec3(1.0), vec3(0.18, 0.32, 0.66), mBlue   * 0.95); // Medium Blue
+        // 4 Encres Pantone Risographie haute saturation (calibrées pour Multiply sur papier écru)
+        vec3 inkYellow = vec3(1.00, 0.91, 0.00); // Sunflower Yellow (éclatant)
+        vec3 inkAqua   = vec3(0.00, 0.78, 0.83); // Riso Aqua (turquoise pur)
+        vec3 inkPink   = vec3(1.00, 0.14, 0.58); // Fluo Pink (rose fluo intense)
+        vec3 inkBlue   = vec3(0.11, 0.28, 0.78); // Medium Blue (bleu cobalt profond)
+
+        // Surimpression soustractive (ordre clair -> foncé)
+        col *= mix(vec3(1.0), inkYellow, mYellow * 0.98);
+        col *= mix(vec3(1.0), inkAqua,   mAqua   * 0.96);
+        col *= mix(vec3(1.0), inkPink,   mPink   * 0.98);
+        col *= mix(vec3(1.0), inkBlue,   mBlue   * 0.98);
     } else {
         col *= 0.95; // Marge légèrement grisée hors de la zone imprimée
     }
@@ -136,9 +160,9 @@ var locP = gl.getAttribLocation(program, 'p');
 gl.enableVertexAttribArray(locP);
 gl.vertexAttribPointer(locP, 2, gl.FLOAT, false, 0, 0);
 
-var textures = [0, 1, 2, 3].map(() => gl.createTexture());
+var textures = [0, 1, 2, 3, 4].map(() => gl.createTexture());
 var getU = name => gl.getUniformLocation(program, name);
-['uTexFractal', 'uTexDyn', 'uTexBlueNoise', 'uTexPaper'].forEach((n, i) => gl.uniform1i(getU(n), i));
+['uTexFractal', 'uTexAutomata', 'uTexBlueNoise', 'uTexPaper', 'uTexLsys'].forEach((n, i) => gl.uniform1i(getU(n), i));
 gl.uniform2f(getU('uRes'), glCanvas.width, glCanvas.height);
 
 function uploadTexture(unit, w, h, data, filter, wrap) {
@@ -158,6 +182,7 @@ function uploadTexture(unit, w, h, data, filter, wrap) {
 // Chargement des textures Blue Noise et Papier Coton depuis textures.js
 uploadTexture(2, 1, 1, new Uint8Array([128, 128, 128, 255]), gl.NEAREST, gl.REPEAT);
 uploadTexture(3, 1, 1, new Uint8Array([245, 240, 227, 255]), gl.LINEAR, gl.REPEAT);
+uploadTexture(4, 1, 1, new Uint8Array([0, 0, 0, 255]), gl.LINEAR, gl.CLAMP_TO_EDGE);
 if (window.RISO_TEXTURES) {
     const imgBN = new Image();
     imgBN.onload = () => uploadTexture(2, 0, 0, imgBN, gl.NEAREST, gl.REPEAT);
@@ -169,51 +194,32 @@ if (window.RISO_TEXTURES) {
 }
 
 /**
- * Rassemble les couches dynamiques (L-Systems + Automates cellulaires)
- * sur un canevas 2D, puis l'envoie au GPU dans l'unité de texture 1.
+ * Envoie les grilles d'automates (Life dans R, Lenia dans G) directement au GPU
+ * dans une texture légère 160x100 (64 Ko) avec filtrage bilinéaire matériel.
  */
-function renderDynamicElements() {
-    dynCtx.globalCompositeOperation = 'source-over';
-    dynCtx.fillStyle = '#000000';
-    dynCtx.fillRect(0, 0, GRID_WIDTH * SCALE, GRID_HEIGHT * SCALE);
-
-    // Addition additive des canaux RVB (R = encre Fluo Pink, G = encre Medium Blue)
-    dynCtx.globalCompositeOperation = 'lighter';
-
-    // 1. Copie des L-Systems (dessinés dans le canal Vert)
-    dynCtx.drawImage(lsysCanvas, 0, 0);
-
-    // 2. Dessin des automates cellulaires (canal Rouge) avec un léger flou
-    // pour obtenir des nuages d'encre organiques après tramage Blue Noise
-    dynCtx.save();
-    dynCtx.filter = 'blur(2.5px)';
-    for (let y = 0; y < GRID_HEIGHT; y++) {
-        for (let x = 0; x < GRID_WIDTH; x++) {
-            const i = y * GRID_WIDTH + x;
-            const px = x * SCALE + SCALE * 0.5;
-            const py = y * SCALE + SCALE * 0.5;
-
-            // Automate discret (Jeu de la Vie) : motif en damier ou jeunes cellules
-            if (gridLife[i] && (((x + y) & 1) || gridAge[i] < 4)) {
-                dynCtx.fillStyle = 'rgba(255, 0, 0, 0.72)';
-                dynCtx.beginPath();
-                dynCtx.arc(px, py, SCALE * 0.65, 0, Math.PI * 2);
-                dynCtx.fill();
-            }
-
-            // Automate continu (Lenia) : densité proportionnelle à l'état [0..1]
-            if (gridLenia[i] > 0.1) {
-                const alpha = clamp(gridLenia[i] * 0.68, 0.05, 0.68);
-                dynCtx.fillStyle = `rgba(255, 0, 0, ${alpha.toFixed(2)})`;
-                dynCtx.beginPath();
-                dynCtx.arc(px, py, SCALE * 1.1, 0, Math.PI * 2);
-                dynCtx.fill();
-            }
+function uploadAutomataTexture() {
+    const W = GRID_WIDTH, H = GRID_HEIGHT;
+    for (let y = 0; y < H; y++) {
+        const row = y * W;
+        for (let x = 0; x < W; x++) {
+            const i = row + x;
+            const o = i * 4;
+            const lifeOn = gridLife[i] && (((x + y) & 1) || gridAge[i] < 4);
+            automataTexData[o]     = lifeOn ? 235 : 0;
+            automataTexData[o + 1] = gridLenia[i] > 0.08 ? Math.min(255, (gridLenia[i] * 255) | 0) : 0;
+            automataTexData[o + 2] = 0;
+            automataTexData[o + 3] = 255;
         }
     }
-    dynCtx.restore();
-
-    uploadTexture(1, 0, 0, dynCanvas, gl.LINEAR, gl.CLAMP_TO_EDGE);
+    uploadTexture(1, W, H, automataTexData, gl.LINEAR, gl.CLAMP_TO_EDGE);
+    needsAutomataUpload = false;
 }
 
-// ============================================================================
+/**
+ * Envoie le canevas des L-Systems au GPU (appelé uniquement quand les plantes poussent
+ * ou quand l'angle de branchement est modifié).
+ */
+function uploadLSystemsTexture() {
+    uploadTexture(4, 0, 0, lsysCanvas, gl.LINEAR, gl.CLAMP_TO_EDGE);
+    needsLsysUpload = false;
+}

@@ -6,19 +6,30 @@ var gridLenia;   // État continu [0.0 .. 1.0] de l'automate Lenia (Brume rose)
 var plants;      // Liste des individus L-Systems implantés sur la carte
 
 // --- Précalcul du noyau de convolution en anneau pour Lenia ---
-// Lenia regarde le voisinage dans un rayon R=5 avec une pondération gaussienne
-// centrée à mi-rayon (r = 0.5), ce qui produit des motifs organiques fluides.
-var kernel = [];
+// Stocké en tableaux typés plats (Int8Array / Float32Array) pour des performances
+// optimales dans la boucle de convolution (zéro allocation mémoire par frame).
+var _kTemp = [];
 for (let dy = -5; dy <= 5; dy++) {
     for (let dx = -5; dx <= 5; dx++) {
         const r = Math.hypot(dx, dy) / 5;
         if (r > 0 && r <= 1) {
             const weight = Math.exp(-(((r - 0.5) / 0.15) ** 2) / 2);
-            kernel.push([dx, dy, weight]);
+            _kTemp.push([dx, dy, weight]);
         }
     }
 }
-var kernelSum = kernel.reduce((sum, item) => sum + item[2], 0);
+var kernelLen = _kTemp.length;
+var kernelDx = new Int8Array(kernelLen);
+var kernelDy = new Int8Array(kernelLen);
+var kernelW = new Float32Array(kernelLen);
+var kernelSum = 0;
+for (let k = 0; k < kernelLen; k++) {
+    kernelDx[k] = _kTemp[k][0];
+    kernelDy[k] = _kTemp[k][1];
+    kernelW[k] = _kTemp[k][2];
+    kernelSum += _kTemp[k][2];
+}
+var invKernelSum = 1.0 / kernelSum;
 
 // --- Grammaires formelles des 3 espèces de L-Systems ---
 // F = avancer en traçant un pétale | + / - = tourner | [ / ] = empiler/dépiler l'état
@@ -57,7 +68,7 @@ function initFlora() {
     for (let i = 0; i < GRID_WIDTH * GRID_HEIGHT; i++) {
         if (isHabitable(i)) {
             if (rnd() < 0.09) gridLife[i] = 1;
-            if (rnd() < 0.055) gridLenia[i] = rnd();
+            if (rnd() < 0.06) gridLenia[i] = rnd();
         }
     }
 
@@ -73,6 +84,7 @@ function initFlora() {
             });
         }
     }
+    needsAutomataUpload = true;
     renderLSystems();
 }
 
@@ -85,43 +97,51 @@ function initFlora() {
  */
 function updateAutomatonLife() {
     const next = new Uint8Array(GRID_WIDTH * GRID_HEIGHT);
+    const W = GRID_WIDTH, H = GRID_HEIGHT;
 
-    for (let y = 0; y < GRID_HEIGHT; y++) {
-        for (let x = 0; x < GRID_WIDTH; x++) {
-            const i = y * GRID_WIDTH + x;
+    for (let y = 0; y < H; y++) {
+        const row = y * W;
+        for (let x = 0; x < W; x++) {
+            const i = row + x;
+            if (!isHabitable(i)) {
+                gridAge[i] = 0;
+                continue;
+            }
 
             // Comptage des 8 voisins (voisinage de Moore)
             let neighbors = 0;
             for (let dy = -1; dy <= 1; dy++) {
+                const ny = y + dy;
+                if (ny < 0 || ny >= H) continue;
+                const nRow = ny * W;
                 for (let dx = -1; dx <= 1; dx++) {
-                    if ((dx || dy) && x + dx >= 0 && y + dy >= 0 && x + dx < GRID_WIDTH && y + dy < GRID_HEIGHT) {
-                        neighbors += gridLife[i + dy * GRID_WIDTH + dx];
-                    }
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = x + dx;
+                    if (nx >= 0 && nx < W) neighbors += gridLife[nRow + nx];
                 }
             }
 
             const alive = gridLife[i];
+            const moist = mapMoisture[i];
             let nextState = 0;
 
-            if (!isHabitable(i)) {
-                nextState = 0; // Survie impossible dans l'eau profonde ou sur les crêtes
-            } else if (alive) {
-                nextState = (neighbors >= PARAMS.smin && neighbors <= 3) ? 1 : 0; // Survie
+            if (alive) {
+                nextState = (neighbors >= PARAMS.smin && neighbors <= 3) ? 1 : 0;
             } else {
-                // Naissance selon le seuil B (PARAMS.bth) ou favorisée par l'humidité
-                const humidBoost = (neighbors === 2 && mapMoisture[i] > 0.78 && rnd() < 0.25);
-                const spontaneous = rnd() < 0.0005 * mapMoisture[i];
+                const humidBoost = (neighbors === 2 && moist > 0.78 && rnd() < 0.25);
+                const spontaneous = rnd() < 0.0005 * moist;
                 nextState = (neighbors === PARAMS.bth || humidBoost || spontaneous) ? 1 : 0;
             }
 
             // Stress hydrique sur sol sec
-            if (nextState && mapMoisture[i] < 0.18 && rnd() < 0.1) nextState = 0;
+            if (nextState && moist < 0.18 && rnd() < 0.1) nextState = 0;
 
             next[i] = nextState;
             gridAge[i] = (nextState && alive) ? Math.min(250, gridAge[i] + 1) : 0;
         }
     }
     gridLife = next;
+    needsAutomataUpload = true;
 }
 
 /**
@@ -131,29 +151,34 @@ function updateAutomatonLife() {
  */
 function updateAutomatonLenia() {
     const next = new Float32Array(GRID_WIDTH * GRID_HEIGHT);
+    const W = GRID_WIDTH, H = GRID_HEIGHT;
+    const baseMu = PARAMS.mu;
 
-    for (let y = 0; y < GRID_HEIGHT; y++) {
-        for (let x = 0; x < GRID_WIDTH; x++) {
-            const i = y * GRID_WIDTH + x;
+    for (let y = 0; y < H; y++) {
+        const row = y * W;
+        for (let x = 0; x < W; x++) {
+            const i = row + x;
             if (!isHabitable(i)) continue;
 
-            // Convolution discrète avec le noyau en anneau
+            // Convolution discrète avec le noyau en anneau (tableaux typés plats)
             let u = 0;
-            for (const [dx, dy, w] of kernel) {
-                const X = x + dx, Y = y + dy;
-                if (X >= 0 && Y >= 0 && X < GRID_WIDTH && Y < GRID_HEIGHT) {
-                    u += w * gridLenia[Y * GRID_WIDTH + X];
+            for (let k = 0; k < kernelLen; k++) {
+                const X = x + kernelDx[k];
+                const Y = y + kernelDy[k];
+                if (X >= 0 && Y >= 0 && X < W && Y < H) {
+                    u += kernelW[k] * gridLenia[Y * W + X];
                 }
             }
-            u /= kernelSum;
+            u *= invKernelSum;
 
             // Couplage environnemental : l'humidité décale légèrement le pic de croissance μ
-            const muLocal = PARAMS.mu + (mapMoisture[i] - 0.5) * 0.05;
-            const growth = 2 * Math.exp(-((u - muLocal) ** 2) / (2 * 0.04 * 0.04)) - 1;
+            const diff = u - (baseMu + (mapMoisture[i] - 0.5) * 0.05);
+            const growth = 2.0 * Math.exp(-(diff * diff) / 0.0032) - 1.0;
             next[i] = clamp(gridLenia[i] + 0.12 * growth, 0, 1);
         }
     }
     gridLenia = next;
+    needsAutomataUpload = true;
 }
 
 /**
@@ -172,6 +197,7 @@ function updateLSystems() {
             const gy = ((p.y / SCALE) + (rnd() * 2 - 1) * radius) | 0;
             if (gx >= 0 && gy >= 0 && gx < GRID_WIDTH && gy < GRID_HEIGHT && isHabitable(gy * GRID_WIDTH + gx)) {
                 gridLife[gy * GRID_WIDTH + gx] = 1;
+                needsAutomataUpload = true;
             }
         }
     }
@@ -197,7 +223,7 @@ function drawFilledPetal(ctx, x1, y1, x2, y2, width) {
 
 /**
  * Interprète la chaîne L-System via une tortue géométrique symétrique
- * et dessine le résultat dans le canal Vert (qui deviendra l'encre Medium Blue).
+ * et dessine le résultat dans le canevas dédié aux L-Systems (encre Medium Blue).
  */
 function renderLSystems() {
     lsysCtx.clearRect(0, 0, GRID_WIDTH * SCALE, GRID_HEIGHT * SCALE);
@@ -209,7 +235,7 @@ function renderLSystems() {
         const angle = (PARAMS.ang * Math.PI / 180) * (1 + p.type * 0.2);
 
         // Cœur circulaire central de la plante
-        lsysCtx.fillStyle = 'rgba(0, 235, 0, 0.92)';
+        lsysCtx.fillStyle = 'rgba(0, 255, 0, 0.96)';
         lsysCtx.beginPath();
         lsysCtx.arc(p.x, p.y, 7 + depth * 2.2, 0, Math.PI * 2);
         lsysCtx.fill();
@@ -225,8 +251,8 @@ function renderLSystems() {
                 if (c === 'F') {
                     const nx = x + Math.cos(heading) * len;
                     const ny = y + Math.sin(heading) * len;
-                    const petalW = Math.max(3.2, (7.5 - depth * 1.6) * (1.0 - stepIdx * 0.04));
-                    lsysCtx.fillStyle = p.type === 1 ? 'rgba(0, 225, 0, 0.82)' : 'rgba(0, 250, 0, 0.88)';
+                    const petalW = Math.max(3.4, (7.8 - depth * 1.6) * (1.0 - stepIdx * 0.04));
+                    lsysCtx.fillStyle = p.type === 1 ? 'rgba(0, 240, 0, 0.90)' : 'rgba(0, 255, 0, 0.95)';
                     drawFilledPetal(lsysCtx, x, y, nx, ny, petalW);
                     x = nx; y = ny;
                     stepIdx++;
@@ -235,13 +261,12 @@ function renderLSystems() {
                 } else if (c === '-') {
                     heading -= angle;
                 } else if (c === '[') {
-                    stack.push([x, y, heading, stepIdx]); // Sauvegarde de l'état de la tortue
+                    stack.push([x, y, heading, stepIdx]);
                 } else if (c === ']') {
-                    [x, y, heading, stepIdx] = stack.pop(); // Restauration de l'état
+                    [x, y, heading, stepIdx] = stack.pop();
                 }
             }
         }
     }
+    needsLsysUpload = true;
 }
-
-// ============================================================================

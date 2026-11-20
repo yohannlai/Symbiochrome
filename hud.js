@@ -1,4 +1,4 @@
-// 6. INTERFACE UTILISATEUR (HUD), NAVIGATION CAMÉRA & BOUCLE PRINCIPALE
+// 6. INTERFACE UTILISATEUR (HUD), NAVIGATION CAMÉRA & INSPECTION
 // ============================================================================
 var camera = { x: 0.5, y: 0.5, z: 1.15 };
 var frame = 0;
@@ -35,6 +35,7 @@ var SLIDERS_DEF = [
     ['smin', 'Automate : survie min', 1, 3, 1, false],
     ['mu', 'Lenia μ (seuil)', 0.1, 0.3, 0.005, false],
     ['03. Presse Risographie'],
+    ['ink', 'Intensité encrage', 0.6, 1.8, 0.05, false],
     ['grain', 'Grain Blue Noise', 0.1, 1.0, 0.05, false],
     ['misreg', 'Décalage encres', 0.0, 2.5, 0.1, false]
 ];
@@ -56,6 +57,9 @@ SLIDERS_DEF.forEach(def => {
         if (def[5]) {
             clearTimeout(regenTimer);
             regenTimer = setTimeout(generateFractalTerrain, 100);
+        } else if (def[0] === 'ang') {
+            // Retour visuel immédiat lorsqu'on change l'angle des L-Systems
+            renderLSystems();
         }
     };
 });
@@ -92,11 +96,11 @@ document.getElementById('btn-reset-flora').onclick = initFlora;
 
 // Légende visuelle des encres et systèmes
 var LEGEND_ITEMS = [
-    ['linear-gradient(135deg, #24c2c7, #2e52a8)', 'Bassins fractals (alt < 32%)'],
-    ['linear-gradient(135deg, #f5f0e3, #ffe314)', 'Terres fertiles (courbes de niveau fBm)'],
-    ['linear-gradient(135deg, #ffe314, #ff479e)', 'Crêtes fractales (alt > 78%)'],
-    ['radial-gradient(#ff479e 35%, transparent 70%)', 'Automates : Life (mosaïque) & Lenia (brume)'],
-    ['repeating-conic-gradient(#2e52a8 0 20deg, transparent 0 40deg)', 'L-Systems : 3 espèces (Rosace, Astre, Corolle)']
+    ['linear-gradient(135deg, #00c7d4, #1c47c7)', 'Bassins fractals (alt < 32%)'],
+    ['linear-gradient(135deg, #ffe800, #00c7d4)', 'Terres fertiles (Jaune + Aqua = Vert)'],
+    ['linear-gradient(135deg, #ffe800, #ff2494)', 'Crêtes fractales (Jaune + Pink = Orange)'],
+    ['radial-gradient(#ff2494 40%, transparent 72%)', 'Automates : Life (mosaïque) & Lenia (brume)'],
+    ['repeating-conic-gradient(#1c47c7 0 20deg, transparent 0 40deg)', 'L-Systems : 3 espèces (Rosace, Astre, Corolle)']
 ];
 document.getElementById('legend-container').innerHTML = LEGEND_ITEMS.map(([bg, label]) =>
     `<div class="legend-item"><i class="swatch" style="background:${bg}"></i><span>${label}</span></div>`
@@ -122,5 +126,3 @@ glCanvas.addEventListener('pointermove', e => {
         `${gridLife[idx] ? 'Life · ' : ''}${gridLenia[idx] > 0.2 ? 'Lenia · ' : ''}` +
         `${pl ? ['Rosace', 'Astre', 'Corolle'][pl.type] + ' (âge ' + (pl.age | 0) + ')' : ''}`;
 });
-
-// Boucle principale d'animation (60 FPS)
