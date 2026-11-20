@@ -5,7 +5,7 @@
  * Contient deux textures procédurales encodées en Base64 pour éviter toute
  * erreur de sécurité CORS lors d'une ouverture directe en local (file://) :
  *  1. blueNoise : bruit bleu 128x128 sans couture pour le tramage stochastique
- *                 de l'encre (remplace le bruit blanc uniforme).
+ *                 de l'encre.
  *  2. paper     : grain de papier coton non couché 512x512 avec fibres
  *                 directionnelles et rares mouchetures recyclées.
  */

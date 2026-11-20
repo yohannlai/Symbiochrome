@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>SYMBIOCHROME — Projet GAIA (Jalon Intermédiaire)</title>
+    <title>SYMBIOCHROME — Projet GAIA IMAC 2027</title>
     <style>
         /* Palette chromatique inspirée des encres Pantone Risographie */
         :root {
@@ -126,14 +126,14 @@
     <div id="hud-panel">
         <div class="brand">
             <b>SYMBIOCHROME</b>
-            <span>PROJET GAIA · JALON 1</span>
+            <span>PROJET GAIA</span>
         </div>
         <div class="badge">
             <b>Périmètre actuel :</b> Terrain fractal (fBm) + Automates cellulaires (Life &amp; Lenia) + 3 espèces L-Systems.<br>
             <i>À venir : WFC (biomes contraints) &amp; Faune évolutive (Boids/GA).</i>
         </div>
 
-        <!-- Les curseurs sont générés dynamiquement par app.js -->
+        <!-- Les curseurs sont générés dynamiquement par le module HUD -->
         <div id="sliders-container"></div>
 
         <h4>Configurations &amp; Contrôles</h4>
@@ -152,6 +152,12 @@
 
     <!-- Chargement des textures puis du moteur de simulation -->
     <script src="textures.js"></script>
-    <script src="app.js"></script>
+    <script src="config.js"></script>
+    <script src="math.js"></script>
+    <script src="terrain.js"></script>
+    <script src="simulation.js"></script>
+    <script src="renderer.js"></script>
+    <script src="hud.js"></script>
+    <script src="main.js"></script>
 </body>
 </html>
