@@ -11,7 +11,6 @@ function mainLoop() {
     camera.x = clamp(camera.x, 0.5 / camera.z, 1 - 0.5 / camera.z);
     camera.y = clamp(camera.y, 0.5 / camera.z, 1 - 0.5 / camera.z);
 
-    // Envoi au GPU uniquement lorsque les données ont réellement changé
     if (needsAutomataUpload) uploadAutomataTexture();
     if (needsLsysUpload) uploadLSystemsTexture();
 
@@ -20,11 +19,12 @@ function mainLoop() {
     gl.uniform1f(getU('uInk'), PARAMS.ink);
     gl.uniform1f(getU('uGrain'), PARAMS.grain);
     gl.uniform1f(getU('uMisreg'), PARAMS.misreg);
+    gl.uniform1f(getU('uShowWfc'), showWfcGrid ? 1.0 : 0.0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     requestAnimationFrame(mainLoop);
 }
 
-// Lancement initial au chargement de la page
-generateFractalTerrain();
+// Lancement initial : génération du monde (Fractales + WFC) puis boucle d'animation
+generateWorld();
 requestAnimationFrame(mainLoop);

@@ -1,4 +1,8 @@
-SYMBIOCHROME — Projet GAIA IMAC 2027 (Première version commit après de nombreux tests en local que j'avais oublié de mettre)
+SYMBIOCHROME — Projet GAIA IMAC 2027 (Parties 1 & 2 : Fractales + WFC + Flore)
 
-Contenu : Terrain fractal (fBm) + Automates cellulaires (Jeu de la Vie & Lenia) + 3 espèces L-Systems, rendus par shader WebGL Risographie.
-Ouvrir index.html dans un navigateur.
+Contenu :
+- Partie 1 : Bruit fractal (fBm) + Wave Function Collapse (6 biomes contraints) + Export JSON + aperçu grille WFC.
+- Partie 2 : Automates cellulaires (Jeu de la Vie & Lenia) + 3 espèces L-Systems couplés aux biomes WFC et à l'humidité.
+- Rendu : Shader WebGL Risographie (4 encres, Blue Noise, surimpression Multiply).
+
+Ouvrir index.html dans un navigateur moderne.
