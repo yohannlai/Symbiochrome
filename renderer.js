@@ -1,7 +1,11 @@
-// 5. MOTEUR DE RENDU WEBGL — SHADER RISOGRAPHIE (ORGANIQUE + APERÇU GRILLE WFC)
+// 5. MOTEUR DE RENDU WEBGL — SHADER RISOGRAPHIE + CALQUE 2D (LABELS WFC 0..5)
 // ============================================================================
 var glCanvas = document.getElementById('gl-canvas');
 var gl = glCanvas.getContext('webgl');
+
+// Calque 2D superposé au WebGL pour afficher proprement les chiffres (0..5) des cases WFC
+var overlayCanvas = document.getElementById('overlay-canvas');
+var overlayCtx = overlayCanvas.getContext('2d');
 
 // Canevas 2D hors-écran dédié uniquement aux L-Systems (encre Medium Blue)
 var lsysCanvas = document.createElement('canvas');
@@ -118,15 +122,14 @@ void main() {
         col *= mix(vec3(1.0), inkPink,   mPink   * 0.98);
         col *= mix(vec3(1.0), inkBlue,   mBlue   * 0.98);
 
-        // Mode soutenance : superposition légère de la grille WFC 20x12 (tuiles & niveaux)
+        // Mode soutenance : quadrillage 20x12 + léger voile par niveau de biome WFC
         if (uShowWfc > 0.5) {
             vec2 g = fract(w * vec2(20.0, 12.0));
             float border = step(g.x, 0.035) + step(g.y, 0.035);
             float biomeId = floor(texture2D(uTexWFC, w).r * 255.0 + 0.5);
-            // Teinte discrète par niveau WFC + quadrillage Medium Blue
             vec3 tint = mix(vec3(0.0, 0.65, 0.85), vec3(1.0, 0.20, 0.55), biomeId / 5.0);
             col = mix(col, tint, 0.16);
-            col = mix(col, inkBlue, clamp(border, 0.0, 1.0) * 0.65);
+            col = mix(col, inkBlue, clamp(border, 0.0, 1.0) * 0.70);
         }
     } else {
         col *= 0.95;
@@ -223,4 +226,55 @@ function uploadAutomataTexture() {
 function uploadLSystemsTexture() {
     uploadTexture(4, 0, 0, lsysCanvas, gl.LINEAR, gl.CLAMP_TO_EDGE);
     needsLsysUpload = false;
+}
+
+/**
+ * Dessine les étiquettes (0..5 + nom court si zoomé) au centre de chaque case WFC
+ * sur le calque 2D synchronisé avec la caméra WebGL.
+ */
+function drawWfcOverlay() {
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    if (!showWfcGrid) return;
+
+    const W = overlayCanvas.width;
+    const H = overlayCanvas.height;
+    const showShortName = camera.z >= 1.85;
+
+    overlayCtx.textAlign = 'center';
+    overlayCtx.textBaseline = 'middle';
+
+    for (let ty = 0; ty < WFC_HEIGHT; ty++) {
+        for (let tx = 0; tx < WFC_WIDTH; tx++) {
+            const wx = (tx + 0.5) / WFC_WIDTH;
+            const wy = (ty + 0.5) / WFC_HEIGHT;
+
+            // Projection monde [0..1] -> coordonnées écran du canevas 1280x800
+            const px = ((wx - camera.x) * camera.z + 0.5) * W;
+            const py = ((wy - camera.y) * camera.z + 0.5) * H;
+            if (px < -40 || py < -40 || px > W + 40 || py > H + 40) continue;
+
+            const lvl = wfcLevels[ty * WFC_WIDTH + tx];
+
+            // Pastille papier écru + bordure Medium Blue pour une lecture nette sur toutes les encres
+            const boxW = showShortName ? 64 : 22;
+            const boxH = showShortName ? 30 : 20;
+            overlayCtx.fillStyle = 'rgba(248, 244, 234, 0.88)';
+            overlayCtx.strokeStyle = '#2e52a8';
+            overlayCtx.lineWidth = 1.5;
+            overlayCtx.fillRect(px - boxW / 2, py - boxH / 2, boxW, boxH);
+            overlayCtx.strokeRect(px - boxW / 2, py - boxH / 2, boxW, boxH);
+
+            // Chiffre du biome (0..5)
+            overlayCtx.fillStyle = (lvl >= 2 && lvl <= 4) ? '#2e52a8' : '#ff479e';
+            overlayCtx.font = 'bold 12px ui-monospace, Menlo, monospace';
+            overlayCtx.fillText(String(lvl), px, showShortName ? py - 6 : py + 0.5);
+
+            // Nom court du biome lorsqu'on zoome
+            if (showShortName) {
+                overlayCtx.fillStyle = '#1e2d5c';
+                overlayCtx.font = 'bold 9px ui-monospace, Menlo, monospace';
+                overlayCtx.fillText(BIOME_SHORT[lvl], px, py + 7);
+            }
+        }
+    }
 }

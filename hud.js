@@ -1,12 +1,27 @@
 // 6. INTERFACE UTILISATEUR (HUD), NAVIGATION CAMÉRA, EXPORT JSON & INSPECTION
 // ============================================================================
 var camera = { x: 0.5, y: 0.5, z: 1.15 };
+var cameraTarget = null; // Cible optionnelle pour les transitions douces du Mode Présentation
 var frame = 0;
 var dragStart = null;
 var isPaused = false;
 
-// Navigation libre à la souris (glisser-déposer pour déplacer, molette pour zoomer)
-glCanvas.onpointerdown = e => { dragStart = [e.clientX, e.clientY]; };
+/**
+ * Définit une cible de caméra animée en douceur (utilisé par tour.js).
+ */
+function setCameraTarget(x, y, z) {
+    cameraTarget = {
+        x: clamp(x, 0, 1),
+        y: clamp(y, 0, 1),
+        z: clamp(z, 1.0, 5.0)
+    };
+}
+
+// Navigation libre à la souris (annule automatiquement toute transition de caméra en cours)
+glCanvas.onpointerdown = e => {
+    cameraTarget = null;
+    dragStart = [e.clientX, e.clientY];
+};
 window.onpointerup = () => { dragStart = null; };
 window.onpointermove = e => {
     if (!dragStart) return;
@@ -17,24 +32,25 @@ window.onpointermove = e => {
 };
 glCanvas.onwheel = e => {
     e.preventDefault();
+    cameraTarget = null;
     camera.z = clamp(camera.z * (e.deltaY < 0 ? 1.1 : 0.9), 1.0, 5.0);
 };
 
-// Définition des curseurs du panneau de contrôle
+// Définition des curseurs du panneau de contrôle (avec clé de section pour le Mode Présentation)
 var SLIDERS_DEF = [
-    ['01. Monde (Fractales fBm + WFC)'],
+    ['01. Monde (Fractales fBm + WFC)', 'world'],
     ['seed', 'Seed', 1, 999, 1, true],
     ['scale', 'Échelle', 0.8, 5, 0.1, true],
     ['rough', 'Rugosité', 0, 1, 0.01, true],
     ['hum', 'Humidité', 0, 1, 0.01, true],
     ['alt', 'Altitude', 0, 1, 0.01, true],
-    ['02. Flore (Automates & L-Systems)'],
+    ['02. Flore (Automates & L-Systems)', 'flora'],
     ['ang', 'Angle branchement', 10, 60, 1, false],
     ['grow', 'Croissance L-System', 0.1, 1.5, 0.05, false],
     ['bth', 'Automate : naissance', 2, 4, 1, false],
     ['smin', 'Automate : survie min', 1, 3, 1, false],
     ['mu', 'Lenia μ (seuil)', 0.1, 0.3, 0.005, false],
-    ['03. Presse Risographie'],
+    ['03. Presse Risographie', 'riso'],
     ['ink', 'Intensité encrage', 0.6, 1.8, 0.05, false],
     ['grain', 'Grain Blue Noise', 0.1, 1.0, 0.05, false],
     ['misreg', 'Décalage encres', 0.0, 2.5, 0.1, false]
@@ -43,8 +59,8 @@ var SLIDERS_DEF = [
 const slidersContainer = document.getElementById('sliders-container');
 var regenTimer;
 SLIDERS_DEF.forEach(def => {
-    if (def.length === 1) {
-        slidersContainer.insertAdjacentHTML('beforeend', `<h4>${def[0]}</h4>`);
+    if (def.length === 2) {
+        slidersContainer.insertAdjacentHTML('beforeend', `<h4 data-section="${def[1]}">${def[0]}</h4>`);
         return;
     }
     const wrap = document.createElement('div');
@@ -75,7 +91,7 @@ for (const key in PRESETS) {
     btn.onclick = () => {
         Object.assign(PARAMS, PRESETS[key]);
         SLIDERS_DEF.forEach(s => {
-            if (s.length > 1) {
+            if (s.length > 2) {
                 document.getElementById('s_' + s[0]).value = PARAMS[s[0]];
                 document.getElementById('v_' + s[0]).textContent = PARAMS[s[0]];
             }
@@ -85,12 +101,19 @@ for (const key in PRESETS) {
     presetsContainer.append(btn);
 }
 
-// Bouton d'aperçu de la grille WFC (pratique pour la soutenance)
-document.getElementById('btn-wfc-grid').onclick = e => {
-    showWfcGrid = !showWfcGrid;
-    e.target.classList.toggle('active', showWfcGrid);
-    e.target.textContent = showWfcGrid ? 'Masquer grille WFC' : 'Afficher grille WFC';
-};
+/**
+ * Synchronise l'état visuel de la grille WFC, du bouton et de son encadré explicatif.
+ */
+function setWfcGridVisible(visible) {
+    showWfcGrid = visible;
+    const btn = document.getElementById('btn-wfc-grid');
+    const box = document.getElementById('wfc-explain-box');
+    btn.classList.toggle('active', showWfcGrid);
+    btn.textContent = showWfcGrid ? 'Masquer grille WFC' : 'Afficher grille WFC';
+    box.classList.toggle('visible', showWfcGrid);
+}
+
+document.getElementById('btn-wfc-grid').onclick = () => setWfcGridVisible(!showWfcGrid);
 
 // Export JSON des cartes de données (Heightmap, Humidité, Grille WFC) — Partie 1
 document.getElementById('btn-export').onclick = () => {

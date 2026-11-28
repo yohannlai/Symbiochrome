@@ -9,12 +9,14 @@
  *      - Le bruit fractal guide les probabilités d'une grille WFC à 6 biomes
  *        avec contraintes d'adjacence strictes (|biome A - biome B| <= 1).
  *      - Le rendu reste organique (courbes de niveau lissées), avec un mode
- *        d'aperçu de la grille WFC activable en direct pour la soutenance.
+ *        d'aperçu de la grille WFC (chiffres 0..5) pour la soutenance.
  *   2. FLORE (Automates Cellulaires Life/Lenia + 3 espèces L-Systems) :
  *      - Contrainte par les biomes habitables du WFC et modulée par l'humidité.
  *   3. RENDU RISOGRAPHIE WEBGL :
  *      - 4 encres haute saturation, tramage Blue Noise, surimpression
  *        soustractive (Multiply) et défaut de calage entre tambours.
+ *   4. MODE PRÉSENTATION (tour.js) :
+ *      - Visite guidée interactive expliquant la théorie et le code interne.
  * ============================================================================
  */
 
@@ -27,7 +29,7 @@ var WFC_WIDTH = 20;     // Résolution horizontale de la grille Wave Function Co
 var WFC_HEIGHT = 12;    // Résolution verticale de la grille Wave Function Collapse
 var SCALE = 8;          // Facteur d'échelle vers le canevas (160*8 = 1280px, 100*8 = 800px)
 
-// Noms des 6 biomes résolus par le WFC (du niveau 0 au niveau 5)
+// Noms complets et abrégés des 6 biomes résolus par le WFC (du niveau 0 au niveau 5)
 var BIOME_NAMES = [
     '0 · Abysses',
     '1 · Eaux côtières',
@@ -36,6 +38,7 @@ var BIOME_NAMES = [
     '4 · Plateau / Montagne',
     '5 · Sommet aride'
 ];
+var BIOME_SHORT = ['Abysses', 'Eaux', 'Plaine', 'Collines', 'Montagne', 'Sommet'];
 
 // Dictionnaire centralisé des paramètres modifiables via les curseurs du HUD
 var PARAMS = {
@@ -59,8 +62,8 @@ var PARAMS = {
     misreg: 1.2   // Défaut de calage mécanique entre tambours
 };
 
-// Drapeaux d'affichage et de synchronisation CPU -> GPU (évite d'uploader les textures inutilement à chaque frame)
-var showWfcGrid = false;       // Affiche/masque la superposition de la grille WFC
+// Drapeaux d'affichage et de synchronisation CPU -> GPU
+var showWfcGrid = false;       // Affiche/masque la superposition de la grille WFC + chiffres 0..5
 var needsAutomataUpload = true;
 var needsLsysUpload = true;
 

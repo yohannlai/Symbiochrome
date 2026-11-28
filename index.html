@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>SYMBIOCHROME — Projet GAIA IMAC 2027 (Fractales + WFC + Flore)</title>
+    <title>SYMBIOCHROME — Projet GAIA IMAC 2027 (Mode Présentation & WFC)</title>
     <style>
         /* Palette chromatique inspirée des encres Pantone Risographie */
         :root {
@@ -26,29 +26,149 @@
             overflow: hidden;
         }
 
-        /* Zone gauche : Canevas WebGL interactif (pan & zoom) */
+        /* Zone gauche : Canevas WebGL + Calque 2D (labels WFC) + Carte Visite Guidée */
         #world-container {
             flex: 1;
             display: flex;
             align-items: center;
             justify-content: center;
             min-width: 0;
+            position: relative;
         }
-        canvas#gl-canvas {
+        #canvas-stage {
+            position: relative;
             max-width: 100%;
             max-height: 100%;
             aspect-ratio: 8 / 5;
             width: min(100%, 155vh);
-            cursor: grab;
-            background: var(--paper);
             border: 2px solid var(--blue);
             box-shadow: 6px 6px 0 rgba(46, 82, 168, 0.2), 0 14px 36px rgba(0, 0, 0, 0.14);
+            background: var(--paper);
+            overflow: hidden;
+        }
+        canvas#gl-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: grab;
         }
         canvas#gl-canvas:active { cursor: grabbing; }
+        canvas#overlay-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        /* Fenêtre flottante du Mode Présentation / Visite Guidée */
+        #tour-card {
+            position: absolute;
+            left: 16px;
+            bottom: 16px;
+            width: min(460px, calc(100% - 32px));
+            max-height: calc(100% - 32px);
+            overflow-y: auto;
+            background: rgba(248, 244, 234, 0.97);
+            border: 2px solid var(--blue);
+            box-shadow: 6px 6px 0 var(--pink), 0 12px 28px rgba(0, 0, 0, 0.18);
+            padding: 14px 16px;
+            z-index: 20;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+        }
+        #tour-card.visible { display: flex; }
+        .tour-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--pink);
+            padding-bottom: 6px;
+            gap: 8px;
+        }
+        .tour-step-pill {
+            background: var(--pink);
+            color: #fff;
+            font-weight: 700;
+            font-size: 10px;
+            padding: 2px 7px;
+            letter-spacing: 0.4px;
+            flex: none;
+        }
+        .tour-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--blue);
+            flex: 1;
+        }
+        .tour-close {
+            border: 1.5px solid var(--blue);
+            background: transparent;
+            color: var(--blue);
+            font-weight: 700;
+            cursor: pointer;
+            padding: 2px 7px;
+            font-size: 11px;
+        }
+        .tour-close:hover { background: var(--pink); color: #fff; border-color: var(--pink); }
+        .tour-block {
+            background: var(--paper);
+            border-left: 3px solid var(--blue);
+            padding: 7px 9px;
+            font-size: 11px;
+            line-height: 1.45;
+            color: #1e2d5c;
+        }
+        .tour-block.code-block {
+            border-left-color: var(--pink);
+            background: #f2ead8;
+        }
+        .tour-block-label {
+            display: block;
+            font-size: 9.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 3px;
+            color: var(--blue);
+        }
+        .tour-block.code-block .tour-block-label { color: var(--pink); }
+        #tour-card code {
+            background: rgba(46, 82, 168, 0.11);
+            color: #1c3988;
+            padding: 1px 4px;
+            font-weight: 700;
+            font-size: 10.5px;
+        }
+        .tour-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 2px;
+            gap: 6px;
+        }
+        .tour-dots {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+        .tour-dot {
+            width: 8px;
+            height: 8px;
+            border: 1.5px solid var(--blue);
+            background: transparent;
+            cursor: pointer;
+            padding: 0;
+        }
+        .tour-dot.active {
+            background: var(--pink);
+            border-color: var(--pink);
+        }
 
         /* Zone droite : Panneau de contrôle (HUD) */
         #hud-panel {
-            width: 280px;
+            width: 288px;
             flex: none;
             background: var(--panel);
             border: 2px solid var(--blue);
@@ -75,6 +195,22 @@
             font-size: 9.5px;
             line-height: 1.35;
         }
+        #btn-tour {
+            width: 100%;
+            padding: 6px 8px;
+            background: var(--blue);
+            color: #fff;
+            border: 2px solid var(--blue);
+            font-size: 10.5px;
+            letter-spacing: 0.4px;
+            box-shadow: 3px 3px 0 var(--pink);
+            margin-top: 2px;
+        }
+        #btn-tour:hover, #btn-tour.active {
+            background: var(--pink);
+            border-color: var(--pink);
+            box-shadow: 3px 3px 0 var(--blue);
+        }
         h4 {
             margin: 8px 0 3px;
             border-bottom: 1.5px solid var(--blue);
@@ -82,6 +218,11 @@
             font-size: 10.5px;
             text-transform: uppercase;
             padding-bottom: 2px;
+            transition: background 0.2s;
+        }
+        h4.tour-highlight {
+            background: rgba(255, 71, 158, 0.16);
+            padding: 2px 4px;
         }
         label { display: flex; justify-content: space-between; margin-top: 3px; font-size: 10.5px; }
         label b { color: var(--pink); }
@@ -99,6 +240,17 @@
             text-transform: uppercase;
         }
         button:hover, button.active { background: var(--pink); color: #fff; border-color: var(--pink); }
+        #wfc-explain-box {
+            display: none;
+            background: #efe7d4;
+            border: 1.5px solid var(--blue);
+            border-left: 4px solid var(--pink);
+            padding: 6px 7px;
+            font-size: 9.5px;
+            line-height: 1.4;
+            margin-top: 3px;
+        }
+        #wfc-explain-box.visible { display: block; }
         .legend-grid { display: grid; gap: 3px; font-size: 10px; }
         .legend-item { display: flex; gap: 7px; align-items: center; }
         .swatch { width: 14px; height: 14px; flex: none; border: 1px solid var(--blue); }
@@ -117,9 +269,34 @@
     </style>
 </head>
 <body>
-    <!-- Canevas principal de rendu WebGL -->
+    <!-- Zone principale : WebGL + Calque 2D + Fenêtre de Visite Guidée -->
     <div id="world-container">
-        <canvas id="gl-canvas" width="1280" height="800"></canvas>
+        <div id="canvas-stage">
+            <canvas id="gl-canvas" width="1280" height="800"></canvas>
+            <canvas id="overlay-canvas" width="1280" height="800"></canvas>
+        </div>
+
+        <!-- Pop-up interactive du Mode Présentation / Visite Guidée -->
+        <aside id="tour-card" aria-live="polite">
+            <div class="tour-header">
+                <span class="tour-step-pill" id="tour-step-badge">1 / 7</span>
+                <span class="tour-title" id="tour-title">Titre de l'étape</span>
+                <button class="tour-close" id="tour-close-btn" title="Fermer (Échap)">✕</button>
+            </div>
+            <div class="tour-block">
+                <span class="tour-block-label">Théorie &amp; Concept</span>
+                <div id="tour-theory"></div>
+            </div>
+            <div class="tour-block code-block">
+                <span class="tour-block-label">Sous le capot (Architecture &amp; Code)</span>
+                <div id="tour-code"></div>
+            </div>
+            <div class="tour-footer">
+                <button id="tour-prev-btn">← Précédent</button>
+                <div class="tour-dots" id="tour-dots"></div>
+                <button id="tour-next-btn">Suivant →</button>
+            </div>
+        </aside>
     </div>
 
     <!-- Panneau latéral des paramètres et de la légende -->
@@ -128,21 +305,32 @@
             <b>SYMBIOCHROME</b>
             <span>PROJET GAIA · WFC</span>
         </div>
+
+        <!-- Bouton principal de lancement du Mode Présentation -->
+        <button id="btn-tour">▶ Mode Présentation (Visite guidée)</button>
+
         <div class="badge">
-            <b>Parties 1 &amp; 2 actives :</b> Fractales (fBm) + Wave Function Collapse (6 biomes contraints) + Automates (Life &amp; Lenia) + 3 espèces L-Systems.<br>
+            <b>Parties 1 &amp; 2 actives :</b> Fractales (fBm) + Wave Function Collapse (6 biomes) + Automates (Life &amp; Lenia) + 3 L-Systems.<br>
             <i>À venir : Partie 3 (Faune Boids + Perceptron + GA).</i>
         </div>
 
-        <!-- Les curseurs sont générés dynamiquement par le module HUD -->
+        <!-- Les curseurs sont générés dynamiquement par hud.js -->
         <div id="sliders-container"></div>
 
-        <h4>Configurations &amp; Contrôles</h4>
+        <h4 data-section="controls">Configurations &amp; Contrôles</h4>
         <div id="presets-container" class="btn-row"></div>
         <div class="btn-row" style="margin-top:4px;">
             <button id="btn-wfc-grid">Afficher grille WFC</button>
             <button id="btn-export">Export JSON</button>
             <button id="btn-pause">Pause</button>
             <button id="btn-reset-flora">Reset Flore</button>
+        </div>
+
+        <!-- Explication contextuelle affichée dès que la grille WFC est activée -->
+        <div id="wfc-explain-box">
+            <b>Lecture de la grille WFC (20×12) :</b><br>
+            Chaque case contient <b>un seul biome</b> de <b>0</b> (Abysses) à <b>5</b> (Sommet), avec un écart maximal de <b>±1</b> entre voisines.<br>
+            <i>Pourquoi les courbes dépassent des cases ?</i> Le relief est lissé (interpolation bilinéaire + fBm) pour garder des côtes organiques sans effet carrelage.
         </div>
 
         <h4>Légende (Biomes WFC &amp; Flore)</h4>
@@ -160,6 +348,7 @@
     <script src="simulation.js"></script>
     <script src="renderer.js"></script>
     <script src="hud.js"></script>
+    <script src="tour.js"></script>
     <script src="main.js"></script>
 </body>
 </html>
